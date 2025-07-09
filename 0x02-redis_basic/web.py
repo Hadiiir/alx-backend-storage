@@ -1,36 +1,44 @@
 #!/usr/bin/env python3
-""" Web cache and tracker """
+""" Expiring web cache and tracker with decorators """
+
 import redis
 import requests
-from typing import Callable
 from functools import wraps
+from typing import Callable
 
-
+# Redis client
 r = redis.Redis()
 
 
-def count_url_access(method: Callable) -> Callable:
+def count_calls(method: Callable) -> Callable:
     """Decorator to count how many times a URL is accessed"""
     @wraps(method)
     def wrapper(url: str) -> str:
-        key = f"count:{url}"
-        r.incr(key)
+        r.incr(f"count:{url}")
         return method(url)
     return wrapper
 
 
-@count_url_access
+def cache_page(expire: int = 10) -> Callable:
+    """Decorator to cache HTML page for `expire` seconds"""
+    def decorator(method: Callable) -> Callable:
+        @wraps(method)
+        def wrapper(url: str) -> str:
+            cache_key = f"cached:{url}"
+            cached = r.get(cache_key)
+            if cached:
+                return cached.decode("utf-8")
+
+            html = method(url)
+            r.setex(cache_key, expire, html)
+            return html
+        return wrapper
+    return decorator
+
+
+@count_calls
+@cache_page(expire=10)
 def get_page(url: str) -> str:
-    """Fetches page content with Redis cache and tracking"""
-    cached_key = f"cached:{url}"
-    cached_content = r.get(cached_key)
-
-    if cached_content:
-        return cached_content.decode("utf-8")
-
-    # Not in cache, fetch and store
+    """Fetch HTML content from URL"""
     response = requests.get(url)
-    content = response.text
-
-    r.setex(cached_key, 10, content)  # Store with expiration of 10 sec
-    return content
+    return response.text
