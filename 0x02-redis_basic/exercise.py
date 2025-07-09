@@ -153,3 +153,117 @@ def replay(method: Callable) -> None:
         input_str = input_args.decode("utf-8")
         output_str = output.decode("utf-8")
         print(f"{method_name}(*{input_str}) -> {output_str}")
+
+
+# Test functions to verify each check
+def test_check_0():
+    """Test Check 0: Basic Cache class and store method"""
+    print("=== CHECK 0: Writing strings to Redis ===")
+    cache = Cache()
+    data = b"hello"
+    key = cache.store(data)
+    print(f"Generated key: {key}")
+    
+    local_redis = redis.Redis()
+    retrieved = local_redis.get(key)
+    print(f"Retrieved data: {retrieved}")
+    assert retrieved == data, f"Expected {data}, got {retrieved}"
+    print("✓ Check 0 passed")
+
+
+def test_check_1():
+    """Test Check 1: Reading from Redis and type conversion"""
+    print("\n=== CHECK 1: Reading from Redis and recovering original type ===")
+    cache = Cache()
+    
+    TEST_CASES = {
+        b"foo": None,
+        123: int,
+        "bar": lambda d: d.decode("utf-8")
+    }
+    
+    for value, fn in TEST_CASES.items():
+        key = cache.store(value)
+        result = cache.get(key, fn=fn)
+        print(f"Stored: {value}, Retrieved: {result}")
+        assert result == value, f"Expected {value}, got {result}"
+    
+    # Test get_str and get_int
+    str_key = cache.store("test")
+    int_key = cache.store(42)
+    
+    assert cache.get_str(str_key) == "test"
+    assert cache.get_int(int_key) == 42
+    print("✓ Check 1 passed")
+
+
+def test_check_2():
+    """Test Check 2: Incrementing values with count_calls decorator"""
+    print("\n=== CHECK 2: Incrementing values ===")
+    cache = Cache()
+    
+    cache.store(b"first")
+    count_1 = cache.get(cache.store.__qualname__)
+    print(f"After 1 call: {count_1}")
+    
+    cache.store(b"second")
+    cache.store(b"third")
+    count_3 = cache.get(cache.store.__qualname__)
+    print(f"After 3 calls: {count_3}")
+    
+    assert count_1 == b'1', f"Expected b'1', got {count_1}"
+    assert count_3 == b'3', f"Expected b'3', got {count_3}"
+    print("✓ Check 2 passed")
+
+
+def test_check_3():
+    """Test Check 3: Storing lists with call_history decorator"""
+    print("\n=== CHECK 3: Storing lists ===")
+    cache = Cache()
+    
+    s1 = cache.store("first")
+    s2 = cache.store("second")
+    s3 = cache.store("third")
+    
+    inputs = cache._redis.lrange(f"{cache.store.__qualname__}:inputs", 0, -1)
+    outputs = cache._redis.lrange(f"{cache.store.__qualname__}:outputs", 0, -1)
+    
+    print(f"inputs: {inputs}")
+    print(f"outputs: {outputs}")
+    
+    expected_inputs = [b"('first',)", b"('second',)", b"('third',)"]
+    assert inputs == expected_inputs, f"Expected {expected_inputs}, got {inputs}"
+    
+    # Check that outputs are UUIDs
+    assert len(outputs) == 3
+    for output in outputs:
+        assert len(output.decode()) == 36  # UUID length
+    print("✓ Check 3 passed")
+
+
+def test_check_4():
+    """Test Check 4: Retrieving lists with replay function"""
+    print("\n=== CHECK 4: Retrieving lists ===")
+    cache = Cache()
+    
+    cache.store("foo")
+    cache.store("bar")
+    cache.store(42)
+    
+    print("Replay output:")
+    replay(cache.store)
+    print("✓ Check 4 passed")
+
+
+def run_all_checks():
+    """Run all checks"""
+    test_check_0()
+    test_check_1()
+    test_check_2()
+    test_check_3()
+    test_check_4()
+    print("\n🎉 All checks passed!")
+
+
+if __name__ == "__main__":
+    run_all_checks()
