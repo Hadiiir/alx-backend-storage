@@ -1,54 +1,52 @@
 #!/usr/bin/env python3
 """
-Expiring web cache and access tracker
+Web cache and tracker implementation
 """
-
-import redis
 import requests
-from typing import Callable
+import redis
 from functools import wraps
+from typing import Callable
 
-r = redis.Redis()
+# Initialize Redis client
+redis_client = redis.Redis()
 
 
-def count_access(method: Callable) -> Callable:
+def track_access(method: Callable) -> Callable:
     """
-    Decorator to count how many times a URL was accessed
+    Decorator to track URL access counts and cache results
     """
     @wraps(method)
     def wrapper(url: str) -> str:
-        key = f"count:{url}"
-        r.incr(key)
-        return method(url)
+        # Track URL access count
+        count_key = f"count:{url}"
+        redis_client.incr(count_key)
+
+        # Check cache first
+        cache_key = f"cache:{url}"
+        cached_content = redis_client.get(cache_key)
+        if cached_content:
+            return cached_content.decode('utf-8')
+
+        # Get fresh content if not in cache
+        content = method(url)
+        
+        # Cache with 10 second expiration
+        redis_client.setex(cache_key, 10, content)
+        return content
     return wrapper
 
 
-def cache_page(expire_time: int = 10) -> Callable:
-    """
-    Decorator to cache page content with expiration
-    """
-    def decorator(method: Callable) -> Callable:
-        @wraps(method)
-        def wrapper(url: str) -> str:
-            cache_key = f"cached:{url}"
-            cached = r.get(cache_key)
-            if cached:
-                return cached.decode("utf-8")
-            result = method(url)
-            # تأكد إنك بتخزن string صريح
-            if isinstance(result, bytes):
-                result = result.decode("utf-8")
-            r.setex(cache_key, expire_time, result)
-            return result
-        return wrapper
-    return decorator
-
-
-@count_access
-@cache_page(expire_time=10)
+@track_access
 def get_page(url: str) -> str:
     """
-    Get HTML content of a URL and cache it
+    Get the HTML content of a URL with caching and access tracking
+    
+    Args:
+        url: The URL to fetch
+        
+    Returns:
+        str: The HTML content of the page
     """
     response = requests.get(url)
     return response.text
+    
