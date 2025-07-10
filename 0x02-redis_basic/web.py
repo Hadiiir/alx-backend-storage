@@ -2,56 +2,53 @@
 """
 Expiring web cache and access tracker
 """
+
 import redis
 import requests
-from functools import wraps
 from typing import Callable
-
+from functools import wraps
 
 r = redis.Redis()
 
 
-def url_access_count(func: Callable) -> Callable:
+def count_access(method: Callable) -> Callable:
     """
     Decorator to count how many times a URL was accessed
     """
-    @wraps(func)
+    @wraps(method)
     def wrapper(url: str) -> str:
-        count_key = f"count:{url}"
-        r.incr(count_key)
-        return func(url)
+        key = f"count:{url}"
+        r.incr(key)
+        return method(url)
     return wrapper
 
 
-def cache_page(func: Callable) -> Callable:
+def cache_page(expire_time: int = 10) -> Callable:
     """
     Decorator to cache page content with expiration
     """
-    @wraps(func)
-    def wrapper(url: str) -> str:
-        cache_key = f"cache:{url}"
-        cached = r.get(cache_key)
-        
-        if cached:
-            return cached.decode("utf-8")
-        
-        result = func(url)
-        r.setex(cache_key, 10, result)
-        return result
-    return wrapper
+    def decorator(method: Callable) -> Callable:
+        @wraps(method)
+        def wrapper(url: str) -> str:
+            cache_key = f"cached:{url}"
+            cached = r.get(cache_key)
+            if cached:
+                return cached.decode("utf-8")
+            result = method(url)
+            # تأكد إنك بتخزن string صريح
+            if isinstance(result, bytes):
+                result = result.decode("utf-8")
+            r.setex(cache_key, expire_time, result)
+            return result
+        return wrapper
+    return decorator
 
 
-@url_access_count
-@cache_page
+@count_access
+@cache_page(expire_time=10)
 def get_page(url: str) -> str:
     """
     Get HTML content of a URL and cache it
-    
-    Args:
-        url: The URL to fetch
-        
-    Returns:
-        str: HTML content of the page
     """
     response = requests.get(url)
     return response.text
