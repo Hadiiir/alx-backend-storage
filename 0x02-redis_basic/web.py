@@ -1,60 +1,52 @@
 #!/usr/bin/env python3
 """
-Expiring web cache and tracker
+Expiring web cache and access tracker
 """
+
 import redis
 import requests
+import hashlib
 from functools import wraps
 from typing import Callable
 
-# Create Redis connection
-redis_store = redis.Redis()
+r = redis.Redis()
 
-def count_access(method: Callable) -> Callable:
-    """
-    Decorator to count URL accesses and cache results with expiration
-    """
-    @wraps(method)
-    def wrapper(url: str) -> str:
-        """
-        Wrapper function that:
-        - Tracks URL access count
-        - Implements caching with expiration
-        """
-        # Key for counting accesses
-        count_key = f"count:{url}"
-        
-        # Increment access count
-        redis_store.incr(count_key)
-        
-        # Key for cached content
-        cache_key = f"cached:{url}"
-        
-        # Check if content is cached
-        cached_content = redis_store.get(cache_key)
-        if cached_content:
-            return cached_content.decode('utf-8')
-        
-        # Get fresh content if not cached
-        html_content = method(url)
-        
-        # Cache the content with 10 second expiration
-        redis_store.setex(cache_key, 10, html_content)
-        
-        return html_content
-    return wrapper
 
-@count_access
+def safe_key(prefix: str, url: str) -> str:
+    """Generate a safe Redis key using SHA-256"""
+    return f"{prefix}:{hashlib.sha256(url.encode()).hexdigest()}"
+
+
+def count_and_cache(expire: int = 10) -> Callable:
+    """Decorator to count access and cache HTML"""
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(url: str) -> str:
+            cache_key = safe_key("cached", url)
+            count_key = safe_key("count", url)
+
+            cached = r.get(cache_key)
+            if cached:
+                return cached.decode("utf-8")
+
+            # Count access
+            r.incr(count_key)
+
+            html = func(url)
+
+            # تأكدي إن اللي بيتخزن هو string متكوّد
+            if isinstance(html, str):
+                html = html.encode('utf-8')
+
+            r.setex(cache_key, expire, html)
+
+            return html.decode('utf-8')
+        return wrapper
+    return decorator
+
+
+@count_and_cache(10)
 def get_page(url: str) -> str:
-    """
-    Get the HTML content of a URL with caching and access tracking
-    
-    Args:
-        url: The URL to fetch
-        
-    Returns:
-        The HTML content as string
-    """
+    """Fetch page content"""
     response = requests.get(url)
     return response.text
-    
