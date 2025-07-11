@@ -1,54 +1,60 @@
 #!/usr/bin/env python3
 """
-Expiring web cache and access tracker
+Expiring web cache and tracker
 """
-
 import redis
 import requests
-from typing import Callable
 from functools import wraps
+from typing import Callable
 
-r = redis.Redis()
-
+# Create Redis connection
+redis_store = redis.Redis()
 
 def count_access(method: Callable) -> Callable:
     """
-    Decorator to count how many times a URL was accessed
+    Decorator to count URL accesses and cache results with expiration
     """
     @wraps(method)
     def wrapper(url: str) -> str:
-        key = f"count:{url}"
-        r.incr(key)
-        return method(url)
+        """
+        Wrapper function that:
+        - Tracks URL access count
+        - Implements caching with expiration
+        """
+        # Key for counting accesses
+        count_key = f"count:{url}"
+        
+        # Increment access count
+        redis_store.incr(count_key)
+        
+        # Key for cached content
+        cache_key = f"cached:{url}"
+        
+        # Check if content is cached
+        cached_content = redis_store.get(cache_key)
+        if cached_content:
+            return cached_content.decode('utf-8')
+        
+        # Get fresh content if not cached
+        html_content = method(url)
+        
+        # Cache the content with 10 second expiration
+        redis_store.setex(cache_key, 10, html_content)
+        
+        return html_content
     return wrapper
 
-
-def cache_page(expire_time: int = 10) -> Callable:
-    """
-    Decorator to cache page content with expiration
-    """
-    def decorator(method: Callable) -> Callable:
-        @wraps(method)
-        def wrapper(url: str) -> str:
-            cache_key = f"cached:{url}"
-            cached = r.get(cache_key)
-            if cached:
-                return cached.decode("utf-8")
-            result = method(url)
-            # تأكد إنك بتخزن string صريح
-            if isinstance(result, bytes):
-                result = result.decode("utf-8")
-            r.setex(cache_key, expire_time, result)
-            return result
-        return wrapper
-    return decorator
-
-
 @count_access
-@cache_page(expire_time=10)
 def get_page(url: str) -> str:
     """
-    Get HTML content of a URL and cache it
+    Get the HTML content of a URL with caching and access tracking
+    
+    Args:
+        url: The URL to fetch
+        
+    Returns:
+        The HTML content as string
     """
     response = requests.get(url)
     return response.text
+    
