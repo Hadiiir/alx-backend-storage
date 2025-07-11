@@ -5,48 +5,50 @@ Expiring web cache and access tracker
 
 import redis
 import requests
-import hashlib
-from functools import wraps
 from typing import Callable
+from functools import wraps
 
 r = redis.Redis()
 
 
-def safe_key(prefix: str, url: str) -> str:
-    """Generate a safe Redis key using SHA-256"""
-    return f"{prefix}:{hashlib.sha256(url.encode()).hexdigest()}"
+def count_access(method: Callable) -> Callable:
+    """
+    Decorator to count how many times a URL was accessed
+    """
+    @wraps(method)
+    def wrapper(url: str) -> str:
+        key = f"count:{url}"
+        r.incr(key)
+        return method(url)
+    return wrapper
 
 
-def count_and_cache(expire: int = 10) -> Callable:
-    """Decorator to count access and cache HTML"""
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
+def cache_page(expire_time: int = 10) -> Callable:
+    """
+    Decorator to cache page content with expiration
+    """
+    def decorator(method: Callable) -> Callable:
+        @wraps(method)
         def wrapper(url: str) -> str:
-            cache_key = safe_key("cached", url)
-            count_key = safe_key("count", url)
-
+            cache_key = f"cached:{url}"
             cached = r.get(cache_key)
             if cached:
                 return cached.decode("utf-8")
-
-            # Count access
-            r.incr(count_key)
-
-            html = func(url)
-
-            # تأكدي إن اللي بيتخزن هو string متكوّد
-            if isinstance(html, str):
-                html = html.encode('utf-8')
-
-            r.setex(cache_key, expire, html)
-
-            return html.decode('utf-8')
+            result = method(url)
+            # تأكد إنك بتخزن string صريح
+            if isinstance(result, bytes):
+                result = result.decode("utf-8")
+            r.setex(cache_key, expire_time, result)
+            return result
         return wrapper
     return decorator
 
 
-@count_and_cache(10)
+@count_access
+@cache_page(expire_time=10)
 def get_page(url: str) -> str:
-    """Fetch page content"""
+    """
+    Get HTML content of a URL and cache it
+    """
     response = requests.get(url)
     return response.text
